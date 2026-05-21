@@ -1,0 +1,21 @@
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    required: [KOLMOPDF_API_KEY]
+    properties:
+      KOLMOPDF_API_KEY:
+        type: string
+        description: "Your KolmoPDF API key (get one at https://www.kolmopdf.com/api-keys)."
+      KOLMOPDF_BASE_URL:
+        type: string
+        default: "https://www.kolmopdf.com"
+  commandFunction: |
+    (config) => ({
+      command: "npx",
+      args: ["-y", "@kolmopdf/mcp-server"],
+      env: {
+        KOLMOPDF_API_KEY: config.KOLMOPDF_API_KEY,
+        KOLMOPDF_BASE_URL: config.KOLMOPDF_BASE_URL || "https://www.kolmopdf.com"
+      }
+    })

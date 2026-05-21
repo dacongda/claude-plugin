@@ -1,0 +1,54 @@
+{
+  "name": "@kolmopdf/mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for KolmoPDF — PDF parsing, layout-preserving translation, and Markdown format conversion.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "kolmopdf-mcp": "./dist/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "claude-code",
+    "codex",
+    "pdf",
+    "markdown",
+    "pdf-to-markdown",
+    "translation",
+    "kolmopdf"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "pdf-lib": "^1.17.1",
+    "undici": "^6.19.8",
+    "yauzl": "^3.1.3",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/yauzl": "^2.10.3",
+    "tsup": "^8.2.4",
+    "typescript": "^5.4.5",
+    "vitest": "^2.0.5"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kolmopdf/claude-plugin.git",
+    "directory": "packages/mcp-server"
+  }
+}

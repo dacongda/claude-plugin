@@ -1,0 +1,75 @@
+name: Bug report
+description: Report a problem with the KolmoPDF plugin or MCP server.
+title: "[bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please fill in the minimal diagnostic info below (TESTING_AND_USAGE.md §9).
+        Do NOT paste your API key. Use support@kolmopdf.com for secret-bearing reports.
+  - type: input
+    id: client-version
+    attributes:
+      label: Client version
+      description: "Claude Code: `claude --version` / Codex: `codex --version`"
+    validations:
+      required: true
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version
+      description: "`/plugin list` or plugin.json version"
+    validations:
+      required: true
+  - type: input
+    id: mcp-version
+    attributes:
+      label: MCP server version
+      description: "`npx @kolmopdf/mcp-server --version`"
+    validations:
+      required: true
+  - type: input
+    id: node-version
+    attributes:
+      label: Node version
+      description: "`node --version`"
+    validations:
+      required: true
+  - type: input
+    id: task-id
+    attributes:
+      label: task_id
+      description: From the failing tool's return value (if any).
+    validations:
+      required: false
+  - type: textarea
+    id: error
+    attributes:
+      label: error_code + message
+      description: The MCP tool's returned error payload.
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: "`uname -a` or OS + version"
+    validations:
+      required: true
+  - type: dropdown
+    id: network
+    attributes:
+      label: Network location
+      description: Affects KolmoPDF upstream link quality.
+      options:
+        - Mainland China
+        - Outside mainland China
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true

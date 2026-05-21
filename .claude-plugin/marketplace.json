@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "kolmopdf",
+  "description": "Official KolmoPDF plugin marketplace for Claude Code.",
+  "owner": {
+    "name": "KomoAI LLC",
+    "email": "support@kolmopdf.com"
+  },
+  "plugins": [
+    {
+      "name": "kolmopdf",
+      "displayName": "KolmoPDF",
+      "source": "./plugins/kolmopdf",
+      "description": "High-fidelity PDF to Markdown parsing, layout-preserving PDF translation, and Markdown format conversion.",
+      "version": "1.0.0",
+      "author": { "name": "KomoAI LLC", "email": "support@kolmopdf.com" },
+      "homepage": "https://www.kolmopdf.com",
+      "repository": "https://github.com/kolmopdf/claude-plugin",
+      "license": "MIT",
+      "keywords": ["pdf", "markdown", "ocr", "translation", "latex", "research"],
+      "category": "document-processing",
+      "tags": ["pdf", "markdown", "translation", "academic", "arxiv"]
+    }
+  ]
+}

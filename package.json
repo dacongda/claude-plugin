@@ -1,0 +1,28 @@
+{
+  "name": "kolmopdf-claude-plugin",
+  "version": "1.0.0",
+  "private": true,
+  "description": "KolmoPDF plugin monorepo for Claude Code, Codex CLI, and Cursor.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@9.12.0",
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "test:unit": "pnpm -r test:unit",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "typescript": "^5.4.5"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kolmopdf/claude-plugin.git"
+  }
+}
