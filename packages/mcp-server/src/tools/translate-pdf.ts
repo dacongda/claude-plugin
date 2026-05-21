@@ -1,10 +1,12 @@
-/**
- * Tool: kolmopdf_translate_pdf (DEVELOPMENT.md §5.5).
- * Layout-preserving PDF translation. submit → poll → download (no unzip).
- * NOTE: scaffold — handler implemented in M2.
- */
+import { createWriteStream, mkdirSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { basename, join, resolve } from "node:path";
 import { z } from "zod";
 import type { McpSuccessResult, ToolContext } from "../context.js";
+import { jsonResult } from "../context.js";
+import { KolmoPdfError } from "../errors.js";
+import { MAX_FILE_BYTES, MAX_PAGES, readFileSize, readPageCount } from "../pages.js";
+import { pollUntilComplete } from "../polling.js";
 
 export const translatePdfName = "kolmopdf_translate_pdf";
 
@@ -38,8 +40,71 @@ export interface TranslatePdfOutput {
 }
 
 export async function translatePdfHandler(
-  _args: TranslatePdfInput,
-  _ctx: ToolContext,
+  args: TranslatePdfInput,
+  ctx: ToolContext,
 ): Promise<McpSuccessResult> {
-  throw new Error("not_implemented: translatePdfHandler");
+  const client = ctx.getClient();
+  const filePath = resolve(args.file_path);
+  const filename = basename(filePath);
+  const fileSize = await readFileSize(filePath);
+  if (fileSize > MAX_FILE_BYTES) {
+    throw new KolmoPdfError("translate_pdf_file_too_large");
+  }
+
+  const pageCount = await readPageCount(filePath);
+  if (pageCount > MAX_PAGES) {
+    throw new KolmoPdfError("translate_pdf_page_limit_exceeded");
+  }
+
+  await ctx.progress?.report("[uploading] Sending PDF for translation...");
+
+  const fileBuffer = await readFile(filePath);
+  const submitResult = await client.translatePdf(
+    fileBuffer,
+    {
+      source_language: args.source_language,
+      target_language: args.target_language,
+      layout_modes: args.layout_modes,
+      enable_image_translation: args.enable_image_translation,
+      enable_table_translation: args.enable_table_translation,
+    },
+    filename,
+  );
+
+  const taskId = submitResult.task_id;
+  await ctx.progress?.report(`[submitted] Task ${taskId} created`);
+
+  await pollUntilComplete({
+    client,
+    taskId,
+    options: {
+      pollIntervalMs: ctx.config.pollIntervalMs,
+      maxPollMinutes: ctx.config.maxPollMinutes,
+    },
+    progress: ctx.progress,
+  });
+
+  await ctx.progress?.report("[downloading] Fetching translated PDF...");
+
+  const subdir = args.output_subdir || taskId;
+  const outputRoot = resolve(ctx.config.outputDir, subdir);
+  mkdirSync(outputRoot, { recursive: true });
+
+  const pdfPath = join(outputRoot, "translated.pdf");
+  const ws = createWriteStream(pdfPath);
+  await client.download(taskId, ws);
+
+  const pagesTranslated = Math.round(submitResult.points_deducted / 2);
+
+  const output: TranslatePdfOutput = {
+    task_id: taskId,
+    pages_translated: pagesTranslated,
+    points_deducted: submitResult.points_deducted,
+    remaining_points: submitResult.remaining_points,
+    output: {
+      translated_pdf_path: pdfPath,
+    },
+  };
+
+  return jsonResult(output as unknown as Record<string, unknown>);
 }

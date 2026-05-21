@@ -1,10 +1,7 @@
-/**
- * KolmoPDF HTTP API client (DEVELOPMENT.md §5.12).
- *
- * Auth uses the `X-API-Key` header (never URL params, to avoid log leakage).
- * NOTE: scaffold — method bodies are stubbed and implemented in milestone M1.
- */
 import type { Writable } from "node:stream";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { KolmoPdfError, errorFromApiBody } from "./errors.js";
 
 export interface KolmoPdfClientOptions {
   apiKey: string;
@@ -57,7 +54,6 @@ export interface StatusResult {
 
 export interface DownloadMeta {
   contentType: string | null;
-  /** true when the payload is a ZIP archive (parse default), false for a single file. */
   isZip: boolean;
   bytesWritten: number;
 }
@@ -83,36 +79,157 @@ export class KolmoPdfClient {
     this.uploadTimeoutMs = opts.uploadTimeoutMs;
   }
 
-  /** Endpoint base path shared by every route. */
-  protected get apiBase(): string {
+  private get apiBase(): string {
     return `${this.baseUrl}/api/pdf-to-markdown-proxy`;
   }
 
-  async parse(_file: FileInput, _form: ParseForm, _filename: string): Promise<SubmitResult> {
-    throw new Error("not_implemented: KolmoPdfClient.parse");
+  private headers(): Record<string, string> {
+    return { "X-API-Key": this.apiKey };
+  }
+
+  private async jsonRequest(url: string, init: RequestInit): Promise<unknown> {
+    const res = await fetch(url, init);
+    const body = (await res.json()) as Record<string, unknown>;
+    if (!res.ok || body.success === false) {
+      throw errorFromApiBody(
+        body as {
+          error_code?: string;
+          message?: string;
+          points_required?: number;
+          current_points?: number;
+        },
+        res.status,
+      );
+    }
+    return body;
+  }
+
+  private async buildFileForm(file: FileInput, filename: string): Promise<FormData> {
+    const form = new FormData();
+    let blob: Blob;
+    if (Buffer.isBuffer(file)) {
+      blob = new Blob([file]);
+    } else {
+      const chunks: Buffer[] = [];
+      for await (const chunk of file) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      blob = new Blob([Buffer.concat(chunks)]);
+    }
+    form.append("file", blob, filename);
+    return form;
+  }
+
+  async parse(file: FileInput, form: ParseForm, filename: string): Promise<SubmitResult> {
+    const fd = await this.buildFileForm(file, filename);
+    if (form.table_mode) fd.append("table_mode", form.table_mode);
+    if (form.formula_format) fd.append("formula_format", form.formula_format);
+    if (form.enable_translation !== undefined)
+      fd.append("enable_translation", String(form.enable_translation));
+    if (form.target_language) fd.append("target_language", form.target_language);
+    if (form.output_options?.length) fd.append("output_options", form.output_options.join(","));
+    if (form.images_as_url !== undefined) fd.append("images_as_url", String(form.images_as_url));
+    if (form.skip_rotation_detection !== undefined)
+      fd.append("skip_rotation_detection", String(form.skip_rotation_detection));
+    if (form.enable_cross_page_merge !== undefined)
+      fd.append("enable_cross_page_merge", String(form.enable_cross_page_merge));
+
+    const body = await this.jsonRequest(`${this.apiBase}/parse`, {
+      method: "POST",
+      headers: this.headers(),
+      body: fd,
+      signal: AbortSignal.timeout(this.uploadTimeoutMs),
+    });
+    return body as unknown as SubmitResult;
   }
 
   async translatePdf(
-    _file: FileInput,
-    _form: TranslateForm,
-    _filename: string,
+    file: FileInput,
+    form: TranslateForm,
+    filename: string,
   ): Promise<SubmitResult> {
-    throw new Error("not_implemented: KolmoPdfClient.translatePdf");
+    const fd = await this.buildFileForm(file, filename);
+    if (form.source_language) fd.append("sourceLanguage", form.source_language);
+    if (form.target_language) fd.append("targetLanguage", form.target_language);
+    if (form.layout_modes?.length) fd.append("layoutModes", form.layout_modes.join(","));
+    if (form.enable_image_translation !== undefined)
+      fd.append("enableImageTranslation", String(form.enable_image_translation));
+    if (form.enable_table_translation !== undefined)
+      fd.append("enableTableTranslation", String(form.enable_table_translation));
+
+    const body = await this.jsonRequest(`${this.apiBase}/translate-pdf`, {
+      method: "POST",
+      headers: this.headers(),
+      body: fd,
+      signal: AbortSignal.timeout(this.uploadTimeoutMs),
+    });
+    return body as unknown as SubmitResult;
   }
 
-  async convert(_file: FileInput, _form: ConvertForm, _filename: string): Promise<SubmitResult> {
-    throw new Error("not_implemented: KolmoPdfClient.convert");
+  async convert(file: FileInput, form: ConvertForm, filename: string): Promise<SubmitResult> {
+    const fd = await this.buildFileForm(file, filename);
+    if (form.target_format) fd.append("targetFormat", form.target_format);
+
+    const body = await this.jsonRequest(`${this.apiBase}/convert`, {
+      method: "POST",
+      headers: this.headers(),
+      body: fd,
+      signal: AbortSignal.timeout(this.uploadTimeoutMs),
+    });
+    return body as unknown as SubmitResult;
   }
 
-  async getStatus(_taskId: string): Promise<StatusResult> {
-    throw new Error("not_implemented: KolmoPdfClient.getStatus");
+  async getStatus(taskId: string): Promise<StatusResult> {
+    const body = await this.jsonRequest(`${this.apiBase}/status/${taskId}`, {
+      method: "GET",
+      headers: this.headers(),
+      signal: AbortSignal.timeout(this.httpTimeoutMs),
+    });
+    return body as unknown as StatusResult;
   }
 
-  async download(_taskId: string, _dest: Writable): Promise<DownloadMeta> {
-    throw new Error("not_implemented: KolmoPdfClient.download");
+  async download(taskId: string, dest: Writable): Promise<DownloadMeta> {
+    const res = await fetch(`${this.apiBase}/download/${taskId}`, {
+      method: "GET",
+      headers: this.headers(),
+      signal: AbortSignal.timeout(this.uploadTimeoutMs),
+    });
+    if (!res.ok) {
+      throw new KolmoPdfError("api_task_error", {
+        message: `Download failed with HTTP ${res.status}`,
+        httpStatus: res.status,
+      });
+    }
+    const contentType = res.headers.get("content-type");
+    const isZip = contentType?.includes("zip") || contentType?.includes("octet-stream") || false;
+    const body = res.body;
+    if (!body) {
+      throw new KolmoPdfError("api_task_error", { message: "Empty download response body" });
+    }
+
+    const reader = body.getReader();
+    let bytesWritten = 0;
+
+    async function* generate() {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        bytesWritten += value.byteLength;
+        yield Buffer.from(value);
+      }
+    }
+
+    const readable = Readable.from(generate());
+    await pipeline(readable, dest);
+    return { contentType, isZip, bytesWritten };
   }
 
   async getBalance(): Promise<BalanceResult> {
-    throw new Error("not_implemented: KolmoPdfClient.getBalance");
+    const body = await this.jsonRequest(`${this.apiBase}/balance`, {
+      method: "GET",
+      headers: this.headers(),
+      signal: AbortSignal.timeout(this.httpTimeoutMs),
+    });
+    return body as unknown as BalanceResult;
   }
 }

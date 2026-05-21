@@ -1,10 +1,12 @@
-/**
- * Tool: kolmopdf_convert_markdown (DEVELOPMENT.md §5.6).
- * Markdown (or zip) → DOCX/HTML/PDF/LaTeX. submit → poll → download.
- * NOTE: scaffold — handler implemented in M2.
- */
+import { createWriteStream, mkdirSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { basename, join, resolve } from "node:path";
 import { z } from "zod";
 import type { McpSuccessResult, ToolContext } from "../context.js";
+import { jsonResult } from "../context.js";
+import { KolmoPdfError } from "../errors.js";
+import { MAX_FILE_BYTES, readFileSize } from "../pages.js";
+import { pollUntilComplete } from "../polling.js";
 
 export const convertName = "kolmopdf_convert_markdown";
 
@@ -32,7 +34,6 @@ export interface ConvertOutput {
   };
 }
 
-/** Map a requested target_format onto the output file extension (§5.6). */
 export function formatToExtension(targetFormat: string): string {
   switch (targetFormat) {
     case "word":
@@ -50,7 +51,6 @@ export function formatToExtension(targetFormat: string): string {
   }
 }
 
-/** Normalize a requested target_format to the canonical extension-less name. */
 export function normalizeFormat(targetFormat: string): string {
   switch (targetFormat) {
     case "word":
@@ -63,10 +63,68 @@ export function normalizeFormat(targetFormat: string): string {
       return targetFormat;
   }
 }
-
 export async function convertHandler(
-  _args: ConvertInput,
-  _ctx: ToolContext,
+  args: ConvertInput,
+  ctx: ToolContext,
 ): Promise<McpSuccessResult> {
-  throw new Error("not_implemented: convertHandler");
+  const client = ctx.getClient();
+  const filePath = resolve(args.file_path);
+  const filename = basename(filePath);
+
+  const fileSize = await readFileSize(filePath);
+  if (fileSize > MAX_FILE_BYTES) {
+    throw new KolmoPdfError("convert_file_too_large");
+  }
+
+  const ext = filePath.toLowerCase();
+  if (!ext.endsWith(".md") && !ext.endsWith(".markdown") && !ext.endsWith(".zip")) {
+    throw new KolmoPdfError("convert_file_type_unsupported");
+  }
+
+  await ctx.progress?.report("[uploading] Sending file for conversion...");
+
+  const fileBuffer = await readFile(filePath);
+  const submitResult = await client.convert(
+    fileBuffer,
+    {
+      target_format: args.target_format,
+    },
+    filename,
+  );
+
+  const taskId = submitResult.task_id;
+  await ctx.progress?.report(`[submitted] Task ${taskId} created`);
+
+  await pollUntilComplete({
+    client,
+    taskId,
+    options: {
+      pollIntervalMs: ctx.config.pollIntervalMs,
+      maxPollMinutes: ctx.config.maxPollMinutes,
+    },
+    progress: ctx.progress,
+  });
+
+  await ctx.progress?.report("[downloading] Fetching converted file...");
+
+  const subdir = args.output_subdir || taskId;
+  const outputRoot = resolve(ctx.config.outputDir, subdir);
+  mkdirSync(outputRoot, { recursive: true });
+
+  const outExt = formatToExtension(args.target_format);
+  const outputPath = join(outputRoot, `result${outExt}`);
+  const ws = createWriteStream(outputPath);
+  await client.download(taskId, ws);
+
+  const output: ConvertOutput = {
+    task_id: taskId,
+    points_deducted: submitResult.points_deducted,
+    remaining_points: submitResult.remaining_points,
+    output: {
+      output_path: outputPath,
+      target_format: normalizeFormat(args.target_format),
+    },
+  };
+
+  return jsonResult(output as unknown as Record<string, unknown>);
 }

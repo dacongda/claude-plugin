@@ -1,10 +1,8 @@
-/**
- * Tool: kolmopdf_estimate_cost (DEVELOPMENT.md §5.7).
- * Local pdf-lib page read + a single GET /balance. Never spends credits.
- * The pure cost formula is implemented here; the handler is stubbed (M3).
- */
+import { resolve } from "node:path";
 import { z } from "zod";
 import type { McpSuccessResult, ToolContext } from "../context.js";
+import { jsonResult } from "../context.js";
+import { readPageCount } from "../pages.js";
 
 export const estimateCostName = "kolmopdf_estimate_cost";
 
@@ -35,13 +33,6 @@ export interface EstimateCostOutput {
   recommendation: string;
 }
 
-/**
- * Credit cost rule (§5.7):
- *   parse           → pages × 2
- *   parse_translate → pages × 3
- *   translate       → pages × 2
- *   convert         → 1 (page count ignored)
- */
 export function estimateCredits(operation: Operation, pages: number): number {
   switch (operation) {
     case "parse":
@@ -62,8 +53,30 @@ export function buildRecommendation(shortfall: number): string {
 }
 
 export async function estimateCostHandler(
-  _args: EstimateCostInput,
-  _ctx: ToolContext,
+  args: EstimateCostInput,
+  ctx: ToolContext,
 ): Promise<McpSuccessResult> {
-  throw new Error("not_implemented: estimateCostHandler");
+  const client = ctx.getClient();
+
+  let pages: number | null = null;
+  if (args.operation !== "convert") {
+    const filePath = resolve(args.file_path);
+    pages = await readPageCount(filePath);
+  }
+
+  const estimatedCredits = estimateCredits(args.operation, pages ?? 1);
+  const balance = await client.getBalance();
+  const currentBalance = balance.points;
+  const shortfall = Math.max(0, estimatedCredits - currentBalance);
+
+  const output: EstimateCostOutput = {
+    pages,
+    estimated_credits: estimatedCredits,
+    current_balance: currentBalance,
+    sufficient: shortfall === 0,
+    shortfall,
+    recommendation: buildRecommendation(shortfall),
+  };
+
+  return jsonResult(output as unknown as Record<string, unknown>);
 }

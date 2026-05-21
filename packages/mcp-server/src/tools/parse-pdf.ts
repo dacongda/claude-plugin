@@ -1,10 +1,13 @@
-/**
- * Tool: kolmopdf_parse_pdf (DEVELOPMENT.md §5.4).
- * submit → poll → download → unzip, all inside one tool call.
- * NOTE: scaffold — handler implemented in M2.
- */
+import { createWriteStream, mkdirSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { basename, join, resolve } from "node:path";
 import { z } from "zod";
 import type { McpSuccessResult, ToolContext } from "../context.js";
+import { jsonResult } from "../context.js";
+import { KolmoPdfError } from "../errors.js";
+import { extractZip } from "../extract.js";
+import { MAX_FILE_BYTES, MAX_PAGES, readFileSize, readPageCount } from "../pages.js";
+import { pollUntilComplete } from "../polling.js";
 
 export const parsePdfName = "kolmopdf_parse_pdf";
 
@@ -45,8 +48,100 @@ export interface ParsePdfOutput {
 }
 
 export async function parsePdfHandler(
-  _args: ParsePdfInput,
-  _ctx: ToolContext,
+  args: ParsePdfInput,
+  ctx: ToolContext,
 ): Promise<McpSuccessResult> {
-  throw new Error("not_implemented: parsePdfHandler");
+  const client = ctx.getClient();
+  const filePath = resolve(args.file_path);
+  const filename = basename(filePath);
+
+  const fileSize = await readFileSize(filePath);
+  if (fileSize > MAX_FILE_BYTES) {
+    throw new KolmoPdfError("parse_file_too_large");
+  }
+
+  const pageCount = await readPageCount(filePath);
+  if (pageCount > MAX_PAGES) {
+    throw new KolmoPdfError("parse_page_limit_exceeded");
+  }
+
+  await ctx.progress?.report("[uploading] Sending PDF to KolmoPDF...");
+
+  const fileBuffer = await readFile(filePath);
+  const submitResult = await client.parse(
+    fileBuffer,
+    {
+      table_mode: args.table_mode,
+      formula_format: args.formula_format,
+      enable_translation: args.enable_translation,
+      target_language: args.target_language,
+      output_options: args.output_options,
+      images_as_url: args.images_as_url,
+      skip_rotation_detection: args.skip_rotation_detection,
+      enable_cross_page_merge: args.enable_cross_page_merge,
+    },
+    filename,
+  );
+
+  const taskId = submitResult.task_id;
+  await ctx.progress?.report(`[submitted] Task ${taskId} created`);
+
+  await pollUntilComplete({
+    client,
+    taskId,
+    options: {
+      pollIntervalMs: ctx.config.pollIntervalMs,
+      maxPollMinutes: ctx.config.maxPollMinutes,
+    },
+    progress: ctx.progress,
+  });
+
+  await ctx.progress?.report("[downloading] Fetching result...");
+
+  const subdir = args.output_subdir || taskId;
+  const outputRoot = resolve(ctx.config.outputDir, subdir);
+  mkdirSync(outputRoot, { recursive: true });
+
+  const isUrlMode = args.images_as_url === true;
+
+  let markdownPath: string;
+  let imagesDir: string | null = null;
+  let outputType: "zip_extracted" | "markdown_file";
+
+  if (isUrlMode) {
+    markdownPath = join(outputRoot, "result.md");
+    const ws = createWriteStream(markdownPath);
+    await client.download(taskId, ws);
+    outputType = "markdown_file";
+  } else {
+    const zipPath = join(outputRoot, "result.zip");
+    const ws = createWriteStream(zipPath);
+    await client.download(taskId, ws);
+    const extracted = await extractZip(zipPath, outputRoot);
+    markdownPath = extracted.markdownPath || join(outputRoot, "result.md");
+    imagesDir = extracted.imagesDir;
+    outputType = "zip_extracted";
+  }
+
+  const mdContent = await readFile(markdownPath, "utf-8").catch(() => "");
+  const preview = mdContent.slice(0, 500);
+
+  const ptsPerPage = args.enable_translation ? 3 : 2;
+  const pagesParsed = Math.round(submitResult.points_deducted / ptsPerPage);
+
+  const output: ParsePdfOutput = {
+    task_id: taskId,
+    pages_parsed: pagesParsed,
+    points_deducted: submitResult.points_deducted,
+    remaining_points: submitResult.remaining_points,
+    output: {
+      type: outputType,
+      markdown_path: markdownPath,
+      images_dir: imagesDir,
+      output_root: outputRoot,
+    },
+    preview,
+  };
+
+  return jsonResult(output as unknown as Record<string, unknown>);
 }

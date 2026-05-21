@@ -1,22 +1,16 @@
-/**
- * Task polling state machine + retry policy (DEVELOPMENT.md §5.10).
- *
- * NOTE: scaffold — `pollUntilComplete` is stubbed and implemented in M1.
- */
 import type { KolmoPdfClient, StatusResult } from "./client.js";
-import type { ProgressReporter } from "./progress.js";
+import { KolmoPdfError } from "./errors.js";
+import { type ProgressReporter, humanizeStatus } from "./progress.js";
 
 export interface PollOptions {
   pollIntervalMs: number;
   maxPollMinutes: number;
 }
 
-/** Terminal + transient status partitioning used by the state machine. */
 export const TERMINAL_OK = "completed";
 export const TERMINAL_FAIL = "failed";
 export const IN_FLIGHT_STATUSES = new Set(["pending", "waiting", "processing"]);
 
-/** Exponential backoff retry policy for transient network/5xx errors (§5.10). */
 export const RETRY_POLICY = {
   maxAttempts: 3,
   baseDelayMs: 1000,
@@ -27,7 +21,6 @@ export function backoffDelayMs(attempt: number): number {
   return RETRY_POLICY.baseDelayMs * RETRY_POLICY.factor ** (attempt - 1);
 }
 
-/** Whether a transient error should be retried (network errors / 5xx). */
 export function isRetryable(err: { httpStatus?: number | null; code?: string }): boolean {
   const transientCodes = ["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EAI_AGAIN"];
   if (err.code && transientCodes.includes(err.code)) return true;
@@ -42,10 +35,50 @@ export interface PollContext {
   progress?: ProgressReporter;
 }
 
-/**
- * Poll `/status/{task_id}` until completion, emitting progress each tick.
- * Resolves with the final completed StatusResult, or throws KolmoPdfError.
- */
-export async function pollUntilComplete(_ctx: PollContext): Promise<StatusResult> {
-  throw new Error("not_implemented: pollUntilComplete");
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchStatusWithRetry(client: KolmoPdfClient, taskId: string): Promise<StatusResult> {
+  for (let attempt = 1; attempt <= RETRY_POLICY.maxAttempts; attempt++) {
+    try {
+      return await client.getStatus(taskId);
+    } catch (err) {
+      const retryable =
+        err instanceof KolmoPdfError
+          ? isRetryable(err)
+          : isRetryable({ code: (err as NodeJS.ErrnoException).code });
+      if (!retryable || attempt === RETRY_POLICY.maxAttempts) throw err;
+      await sleep(backoffDelayMs(attempt));
+    }
+  }
+  throw new KolmoPdfError("client_network_error");
+}
+
+export async function pollUntilComplete(ctx: PollContext): Promise<StatusResult> {
+  const { client, taskId, options, progress } = ctx;
+  const deadline = Date.now() + options.maxPollMinutes * 60_000;
+
+  while (true) {
+    if (Date.now() > deadline) {
+      throw new KolmoPdfError("client_polling_timeout");
+    }
+
+    const result = await fetchStatusWithRetry(client, taskId);
+
+    if (result.status === TERMINAL_OK) {
+      await progress?.report(`[completed] Task ${taskId} done`);
+      return result;
+    }
+
+    if (result.status === TERMINAL_FAIL) {
+      throw new KolmoPdfError(result.error_code || "api_task_error", {
+        message: result.message || "Task failed",
+      });
+    }
+
+    const aheadTasks = result.queue_info?.ahead_tasks;
+    await progress?.report(humanizeStatus(result.status as string, aheadTasks));
+    await sleep(options.pollIntervalMs);
+  }
 }

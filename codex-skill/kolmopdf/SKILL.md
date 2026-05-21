@@ -1,6 +1,6 @@
 ---
 name: kolmopdf
-description: Use this skill when the user needs to parse, read, translate, or convert PDF documents — especially technical PDFs (research papers, arxiv, IEEE standards, whitepapers, textbooks), PDFs with formulas, tables, multi-column layouts, or code blocks, and when the user needs layout-preserving PDF translation across languages. Also use when converting Markdown to DOCX, HTML, PDF, or LaTeX. Prefer this skill over the built-in PDF Read tool whenever the PDF contains formulas, tables, or non-trivial layout, or exceeds 20 pages. Triggers: "parse PDF", "convert PDF to markdown", "read this paper", "arxiv", "research paper", "technical document", "formula", "LaTeX from PDF", "multi-column PDF", "translate PDF", "layout-preserving translation", "bilingual PDF", "markdown to docx", "markdown to html", "markdown to pdf", "markdown to latex", "format conversion".
+description: Use this skill ONLY when the user gives an explicit operational instruction to process a PDF or Markdown file. Specifically: (1) explicitly asks to parse/convert a PDF into Markdown, (2) explicitly asks for layout-preserving PDF translation to produce a new translated PDF, (3) explicitly asks to export/convert Markdown to DOCX/HTML/PDF/LaTeX, or (4) a combination of the above (e.g. "parse this PDF to Markdown, then translate it, then export to DOCX"). Do NOT trigger for general PDF reading, summarization, or Q&A unless the user explicitly requests Markdown extraction first. Triggers: "parse PDF to markdown", "convert PDF to markdown", "translate this PDF preserving layout", "export markdown to docx/html/pdf/latex", "PDF to markdown with tables as images", "parse and translate this PDF".
 allowed-tools: mcp__kolmopdf__kolmopdf_parse_pdf, mcp__kolmopdf__kolmopdf_translate_pdf, mcp__kolmopdf__kolmopdf_convert_markdown, mcp__kolmopdf__kolmopdf_estimate_cost, mcp__kolmopdf__kolmopdf_check_balance, Read, Write
 ---
 
@@ -10,10 +10,37 @@ You have access to KolmoPDF tools (prefix `kolmopdf_*`) for high-fidelity PDF pa
 
 ## When to use
 
-- PDF with formulas, tables, code blocks, multi-column layout, or > 20 pages → ALWAYS prefer `kolmopdf_parse_pdf` over built-in Read.
-- PDF translation while preserving layout → use `kolmopdf_translate_pdf`.
-- Markdown → DOCX/HTML/PDF/LaTeX → use `kolmopdf_convert_markdown`.
-- Simple text-only PDFs ≤ 20 pages and no formulas/tables → built-in Read is acceptable.
+This skill triggers ONLY on explicit user instructions to perform a file operation:
+
+- User explicitly asks to parse/convert a PDF into Markdown → `kolmopdf_parse_pdf`.
+- User explicitly asks for layout-preserving PDF translation → `kolmopdf_translate_pdf`.
+- User explicitly asks to export Markdown to DOCX/HTML/PDF/LaTeX → `kolmopdf_convert_markdown`.
+- User requests a combination (e.g. "parse this PDF, translate it, then export to DOCX") → chain the tools in sequence.
+
+Do NOT trigger when:
+- User just wants to read or summarize a PDF without requesting Markdown output.
+- User asks general questions about a PDF's content (use built-in Read instead).
+- User mentions PDF in passing without an explicit processing instruction.
+
+## Natural language parameter mapping
+
+Users may describe parameters in natural language. Map their descriptions to tool parameters:
+
+| User says | Parameter |
+| --- | --- |
+| "tables as images" / "keep table layout" | `table_mode="image"` |
+| "use dollar signs for formulas" / "KaTeX format" | `formula_format="dollar"` |
+| "use bracket notation" / "LaTeX-style delimiters" | `formula_format="bracket"` |
+| "translate to Chinese/Japanese/..." | `enable_translation=true`, `target_language="zh"/"ja"/...` |
+| "bilingual output" / "show both languages" | `output_options=["bilingual"]` |
+| "images as URLs" / "don't download images" | `images_as_url=true` |
+| "merge tables across pages" / "cross-page tables" | `enable_cross_page_merge=true` |
+| "side by side translation" | `layout_modes=["side_by_side"]` |
+| "translate images too" | `enable_image_translation=true` |
+| "translate tables too" | `enable_table_translation=true` |
+| "export to Word/DOCX/HTML/PDF/LaTeX" | `target_format` accordingly |
+
+When the user's natural language is ambiguous, use sensible defaults from `references/parameter-glossary.md`. When the user specifies multiple preferences in one request, combine all applicable parameters in a single tool call.
 
 ## Cost-awareness protocol
 

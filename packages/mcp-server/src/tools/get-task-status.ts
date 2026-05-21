@@ -1,11 +1,6 @@
-/**
- * Tool: kolmopdf_get_task_status (DEVELOPMENT.md §5.9).
- * Advanced/debug escape hatch — hidden from default LLM selection by wording
- * the description so it does not match common triggers.
- * NOTE: scaffold — handler implemented in M3.
- */
 import { z } from "zod";
 import type { McpSuccessResult, ToolContext } from "../context.js";
+import { jsonResult } from "../context.js";
 
 export const getTaskStatusName = "kolmopdf_get_task_status";
 
@@ -20,8 +15,10 @@ export const getTaskStatusInputSchema = z.object({
 export type GetTaskStatusInput = z.infer<typeof getTaskStatusInputSchema>;
 
 export async function getTaskStatusHandler(
-  _args: GetTaskStatusInput,
-  _ctx: ToolContext,
+  args: GetTaskStatusInput,
+  ctx: ToolContext,
 ): Promise<McpSuccessResult> {
-  throw new Error("not_implemented: getTaskStatusHandler");
+  const client = ctx.getClient();
+  const status = await client.getStatus(args.task_id);
+  return jsonResult(status as unknown as Record<string, unknown>);
 }
